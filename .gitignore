@@ -1,0 +1,22 @@
+# Python bytecode & cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# macOS system files
+.DS_Store
+
+# Weights and Datasets (Crucial for later)
+*.pt
+*.pth
+*.bin
+data/
+checkpoints/
