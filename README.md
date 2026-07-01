@@ -2,6 +2,8 @@
 
 A micro-library of clean, decoupled, and from-scratch implementations covering classical machine learning, modern sparse large language models, and generative frameworks.
 
+Status: 🚧 Under active development — implementations are being added incrementally.
+
 ## Repository Architecture
 ```text
 grad-zero/
