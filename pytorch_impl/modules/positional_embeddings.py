@@ -7,8 +7,8 @@ import torch
 def apply_rope_adjacent(x_q, x_k, freq_cis):
     """q and k can have different head counts (e.g. GQA), so their shapes
     are derived independently rather than assuming they match
-    during inference as we have single query tensor and staked key tensors
-    the dimension of sequence length can differ, similarly num_heads and hidden_dim
+    during inference as we have single query tensor and stacked key tensors
+    the dimension of sequence length can differ, similarly num_heads
     also change in GQA"""
     Bq, num_hq, Lq, h_dim = x_q.shape
     Bk, num_hk, Lk, h_dim = x_k.shape
