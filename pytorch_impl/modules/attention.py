@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from dataclasses import dataclass
+from positional_embeddings import apply_rope_adjacent
 
 @dataclass
 class AttentionConfig:
@@ -29,8 +30,10 @@ class KV_cache:
     def __init__(self, config: AttentionConfig):
         kv_heads = config.num_kv_heads or config.num_heads
         head_dim = config.d_model // config.num_q_heads
+
         self.k_cache = [torch.zeros(config.batch_size, kv_heads, config.max_seq_len, head_dim) for _ in range(config.num_layers)]
         self.v_cache = [torch.zeros(config.batch_size, kv_heads, config.max_seq_len, head_dim) for _ in range(config.num_layers)]
+
         self.pos = 0
 
     def update(self, k_new, v_new, layer_num):
@@ -40,8 +43,10 @@ class KV_cache:
         (not just the newly written chunk) so attention can be computed over all past tokens.
         """
         new_seq_len = k_new.shape[2]
+
         self.k_cache[layer_num][:, :, self.pos: self.pos+new_seq_len, :] = k_new
         self.v_cache[layer_num][:, :, self.pos: self.pos+new_seq_len, :] = v_new
+
         return self.k_cache[layer_num][:, :, : self.pos+new_seq_len, :], self.v_cache[layer_num][:, :, : self.pos+new_seq_len, :]
 
     def step(self, n_new):
@@ -61,10 +66,11 @@ class MHSA(nn.Module):
         self.num_heads = num_heads
         assert d_model % num_heads == 0
         self.head_dim = d_model // num_heads
+
         self.qkv = nn.Linear(d_model, 3*d_model, bias=False)
         self.out = nn.Linear(d_model, d_model, bias=False)
 
-    def forward(self, x, layer_num, padding_mask=None, kv_cache=None):
+    def forward(self, x, layer_num, freq_cis, padding_mask=None, kv_cache=None):
         """
         x: (B, L, D) input for this step — L == 1 during autoregressive decode, L > 1 during prefill.
         layer_num: index into kv_cache identifying which layer's buffer to read/write.
@@ -74,9 +80,14 @@ class MHSA(nn.Module):
         B, L, D = x.shape
         qkv = self.qkv(x)
         q, k, v = torch.chunk(qkv, 3, dim=-1)
+
         q = q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+
+        start_pos = kv_cache.pos if kv_cache is not None else 0
+        freq_cis_sliced = freq_cis[start_pos: start_pos + L]# get the start position for freq_cis used in RoPE
+        q, k = apply_rope_adjacent(q, k, freq_cis_sliced)
 
         if kv_cache is not None:
             k, v = kv_cache.update(k, v, layer_num)
@@ -91,13 +102,15 @@ class MHSA(nn.Module):
             l_new = L_total - L
             mask = ~torch.tril(torch.ones(L, L_total, device=x.device, dtype=torch.bool), diagonal=l_new)
             combined_mask = mask
+
         if padding_mask is not None:
             # padding mask defines which key position to ignore
             mask =  padding_mask.view(B, 1, 1, L_total)
-            if combined_mask is not None:
-                combined_mask = combined_mask | mask
+            combined_mask = mask if combined_mask is None else (combined_mask | mask)
+
         if combined_mask is not None:
             attn = attn.masked_fill(combined_mask, float('-inf'))
+
         attn = torch.softmax(attn, dim=-1)
         val = attn @ v
         val = torch.reshape(val.transpose(1, 2), (B, L, D))
@@ -115,6 +128,7 @@ class CrossAttention(nn.Module):
         self.num_heads = num_heads
         assert d_model % num_heads == 0
         self.head_dim = d_model // num_heads
+
         self.q = nn.Linear(d_model, d_model, bias=False)
         self.kv = nn.Linear(d_model, 2*d_model, bias=False)
         self.out = nn.Linear(d_model, d_model, bias=False)
@@ -128,7 +142,9 @@ class CrossAttention(nn.Module):
         q = self.q(x).view(B, L_q, self.num_heads, self.head_dim).transpose(1,2)
         kv = self.kv(context)
         k, v = torch.chunk(kv, 2, dim=-1)
+
         L_k = context.shape[1]
+
         k = k.view(B, L_k, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(B, L_k, self.num_heads, self.head_dim).transpose(1, 2)
 
@@ -136,6 +152,7 @@ class CrossAttention(nn.Module):
         if padding_mask is not None:
             mask = padding_mask.view(B, 1, 1, L_k)
             attn = attn.masked_fill(mask, float('-inf'))
+
         attn_scores = torch.softmax(attn, dim=-1)
         val = attn_scores @ v
         val = torch.reshape(val.transpose(1, 2), (B, L_q, d))
@@ -150,15 +167,17 @@ class GQA(nn.Module):
         self.d_model = d_model
         self.num_q_heads = num_q_heads
         self.num_kv_heads = num_kv_heads
+
         assert d_model % num_q_heads == 0
         self.q_head_dim = d_model // num_q_heads
         assert num_q_heads % num_kv_heads == 0
         self.kv_head_dim = self.q_head_dim
+
         self.q = nn.Linear(d_model, d_model, bias=False)
         self.kv = nn.Linear(d_model, 2*num_kv_heads*self.q_head_dim, bias=False)
         self.out = nn.Linear(d_model, d_model, bias=False)
 
-    def forward(self, x, layer_num, padding_mask=None, kv_cache=None):
+    def forward(self, x, layer_num, freq_cis, padding_mask=None, kv_cache=None):
         """
         x: (B, L, D) input for this step — L == 1 during autoregressive decode, L > 1 during prefill.
         layer_num: index into kv_cache identifying which layer's buffer to read/write.
@@ -168,12 +187,20 @@ class GQA(nn.Module):
         B, L, D = x.shape
         q = self.q(x)
         kv = self.kv(x)
+
         k, v = torch.chunk(kv, 2, dim=-1)
+
         q = q.view(B, L, self.num_q_heads, self.q_head_dim).transpose(1, 2)
         k = k.view(B, L, self.num_kv_heads, self.kv_head_dim).transpose(1, 2)
         v = v.view(B, L, self.num_kv_heads, self.kv_head_dim).transpose(1, 2)
+
+        start_pos = kv_cache.pos if kv_cache is not None else 0
+        freq_cis_sliced = freq_cis[start_pos: start_pos + L]
+        q, k = apply_rope_adjacent(q, k, freq_cis_sliced)
+
         if kv_cache is not None:
             k, v = kv_cache.update(k, v, layer_num)
+
         k = k.repeat_interleave(self.num_q_heads // self.num_kv_heads, dim=1)
         v = v.repeat_interleave(self.num_q_heads // self.num_kv_heads, dim=1)
         
@@ -188,13 +215,15 @@ class GQA(nn.Module):
             l_new = L_total - L
             mask = ~torch.tril(torch.ones(L, L_total, device=x.device, dtype=torch.bool), diagonal=l_new)
             combined_mask = mask
+
         if padding_mask is not None:
             # padding mask defines which key position to ignore
             mask =  padding_mask.view(B, 1, 1, L_total)
-            if combined_mask is not None:
-                combined_mask = combined_mask | mask
+            combined_mask = mask if combined_mask is None else (combined_mask | mask)
+
         if combined_mask is not None:
             attn = attn.masked_fill(combined_mask, float('-inf'))
+            
         attn = torch.softmax(attn, dim=-1)
         val = attn @ v
         val = torch.reshape(val.transpose(1, 2), (B, L, D))
