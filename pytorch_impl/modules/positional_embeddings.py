@@ -5,12 +5,15 @@ import torch
 # pairs can sometimes be unfriendly to GPU memory contiguity and certain CUDA kernels.
 
 def apply_rope_adjacent(x_q, x_k, freq_cis):
-    # q and k come from the same input x, so batch size and seq len always
-    # match; only head count can differ (e.g. GQA: num_q_heads > num_kv_heads)
-    B, num_hq, L, h_dim = x_q.shape
-    _, num_hk, _, _ = x_k.shape
-    xq = x_q.float().reshape(B, num_hq, L, h_dim//2, 2)
-    xk = x_k.float().reshape(B, num_hk, L, h_dim//2, 2)
+    """q and k can have different head counts (e.g. GQA), so their shapes
+    are derived independently rather than assuming they match
+    during inference as we have single query tensor and staked key tensors
+    the dimension of sequence length can differ, similarly num_heads and hidden_dim
+    also change in GQA"""
+    Bq, num_hq, Lq, h_dim = x_q.shape
+    Bk, num_hk, Lk, h_dim = x_k.shape
+    xq = x_q.float().reshape(Bq, num_hq, Lq, h_dim//2, 2)
+    xk = x_k.float().reshape(Bk, num_hk, Lk, h_dim//2, 2)
     xq_complex = torch.view_as_complex(xq)
     xk_complex = torch.view_as_complex(xk)
 
@@ -24,6 +27,6 @@ def apply_rope_adjacent(x_q, x_k, freq_cis):
     xq_real = torch.view_as_real(prod_q)
     xk_real = torch.view_as_real(prod_k)
 
-    xq_out = xq_real.reshape(B, num_hq, L, h_dim).type_as(x_q)
-    xk_out = xk_real.reshape(B, num_hk, L, h_dim).type_as(x_k)
+    xq_out = xq_real.reshape(Bq, num_hq, Lq, h_dim).type_as(x_q)
+    xk_out = xk_real.reshape(Bk, num_hk, Lk, h_dim).type_as(x_k)
     return xq_out, xk_out
