@@ -4,6 +4,11 @@ import torch.nn.functional as F
 
 class PatchEmbedding(nn.Module):
     def __init__(self, patch_size, num_channels, d_model):
+        """
+        patch_size: side length of each square patch.
+        num_channels: input image channels (e.g. 3 for RGB).
+        d_model: output embedding dimension each flattened patch is projected to.
+        """
         super().__init__()
         self.patch_size = patch_size
         self.num_channels = num_channels
@@ -13,6 +18,11 @@ class PatchEmbedding(nn.Module):
 
 
     def forward(self, img):
+        """
+        img: (B, C, H, W), H and W must each be divisible by patch_size.
+        returns: (B, num_patches, d_model), where num_patches = (H//patch_size) * (W//patch_size),
+        patches ordered row-major (left-to-right, top-to-bottom).
+        """
         B, C, H, W = img.shape
         p = self.patch_size
         
