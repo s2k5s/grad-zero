@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from dataclasses import dataclass
-from positional_embeddings import apply_rope_adjacent
+from .positional_embeddings import apply_rope_adjacent
 
 @dataclass
 class AttentionConfig:
