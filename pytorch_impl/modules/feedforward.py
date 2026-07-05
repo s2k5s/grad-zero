@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 class swigluFFN(nn.Module):
     """
-    Llama 3 style feed-forward block: SwiGLU-gated MLP.
+    LM style feed-forward block: SwiGLU-gated MLP.
     output --> down_proj(silu(gate_proj(x)) * up_proj(x))
     """
     def __init__(self, d_model, multiple_of=256, ffn_dim_multiplier=None):

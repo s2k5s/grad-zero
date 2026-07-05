@@ -4,10 +4,10 @@ import torch.nn.functional as F
 from pytorch_impl.modules.attention import GQA
 from pytorch_impl.modules.feedforward import swigluFFN
 from pytorch_impl.modules.norm import RMSNorm
-from pytorch_impl.architectures.sequence.llama3.config import LlamaConfig
+from pytorch_impl.architectures.sequence.llama3.config import LMConfig
 
 class Block(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LMConfig):
         super().__init__()
         self.attn = GQA(config.attention)
         self.attn_norm = RMSNorm(config.attention.d_model, config.norm_eps)
