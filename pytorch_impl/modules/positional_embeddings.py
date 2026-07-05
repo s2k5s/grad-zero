@@ -47,3 +47,39 @@ def compute_freq_cis(head_dim, max_seq_length, theta=10000.0):
     freqs_real = torch.stack([cos, sin], dim=-1) #Go to the smallest atomic unit (the individual numbers) and interleave them directly
     freq_cis_complex = torch.view_as_complex(freqs_real)
     return freq_cis_complex
+
+
+def compute_2D_freq_cis(head_dim, num_h, num_w, theta=10000.0):
+    """
+    similar to the 1D version, but instead of taking the entire head_dim
+    half head_dim is used with num_h for number of patch rows and the second
+    half is num_w, number of patch columns
+    These row and column positional tensors are then concatinated along the 
+    head dimension
+    """
+    indices = torch.arange(0, head_dim//2, 2).float() # head_dim // 4 elements
+    theta_i = 1.0 / (theta ** (indices/(head_dim//2)))
+
+    pos_h = torch.arange(0, num_h).float()
+    pos_w = torch.arange(0, num_w).float()
+
+    angle_h = torch.outer(pos_h, theta_i)
+    angle_w = torch.outer(pos_w, theta_i)
+
+    angle_h = angle_h.unsqueeze(1) # add a width dimension (h, 1, m)
+    angle_h = angle_h.expand(-1, num_w, -1) # expand along the width dimension 
+
+    angle_w = angle_w.unsqueeze(0) 
+    angle_w = angle_w.expand(num_h, -1, -1)
+
+    angles = torch.cat([angle_h, angle_w], -1)
+    
+    #flatten the spatial grid into 1D
+    angles = angles.reshape(num_h*num_w, (head_dim//2)) # post concatination we get half dimension back
+    
+    sin = torch.sin(angles)
+    cosine = torch.cos(angles)
+
+    freq_real = torch.stack([cosine, sin], dim=-1)
+    freq_complex = torch.view_as_complex(freq_real)
+    return freq_complex
