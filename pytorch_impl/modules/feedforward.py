@@ -39,13 +39,12 @@ class swigluFFN(nn.Module):
 
 
 
-class FFN(nn.Module):
+class reluFFN(nn.Module):
     def __init__(self, d_model, multiple_of=256, ffn_dim_multiplier=None):
         super().__init__()
         hidden_dim = 4 * d_model
-        hidden_dim = int(2 * hidden_dim / 3)
         if ffn_dim_multiplier is not None:
-            hidden_dim = ffn_dim_multiplier * hidden_dim
+            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         remainder = -hidden_dim % multiple_of #how much room is left to complete the next multiple of 256
         hidden_dim = hidden_dim + remainder
         self.up_proj = nn.Linear(d_model, hidden_dim, bias=False)
@@ -53,3 +52,16 @@ class FFN(nn.Module):
 
     def forward(self, x):
         return self.down_proj(F.relu(self.up_proj(x)))
+    
+class geluFFN(nn.Module):
+    def __init__(self, d_model, multiple_of=256, ffn_dim_multiplier=None):
+        super().__init__()
+        hidden_dim = 4 * d_model
+        if ffn_dim_multiplier is not None:
+            hidden_dim = int(hidden_dim * ffn_dim_multiplier)
+        hidden_dim = (-hidden_dim % multiple_of) + hidden_dim
+        self.up_proj = nn.Linear(d_model, hidden_dim, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, d_model, bias=False)
+
+    def forward(self, x):
+        return self.down_proj(F.gelu(self.up_proj(x)))
