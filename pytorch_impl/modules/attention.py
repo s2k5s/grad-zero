@@ -229,3 +229,53 @@ class GQA(nn.Module):
         val = torch.reshape(val.transpose(1, 2), (B, L, D))
         out = self.out(val)
         return out
+
+
+class NonCausalMHSA(nn.Module):
+    """Bidirectional multi-head self-attention (no causal mask, no KV cache) — for vision encoders."""
+    def __init__(self, config: AttentionConfig):
+        super().__init__()
+        d_model, num_heads = config.d_model, config.num_heads
+        self.d_model = d_model
+        self.num_heads = num_heads
+        assert d_model % num_heads == 0
+        self.head_dim = d_model // num_heads
+
+        self.qkv = nn.Linear(d_model, 3*d_model, bias=False)
+        self.out = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, x, freq_cis, padding_mask=None):
+        """
+        x: (B, L, D) input — every position attends to every other position, no causal restriction.
+        freq_cis: RoPE rotation tensor (1D or 2D), sliced/shaped to cover all L positions.
+        padding_mask: (B, L) bool mask, True at key positions to ignore (e.g. padding patches).
+        """
+        B, L, D = x.shape
+        qkv = self.qkv(x)
+        q, k, v = torch.chunk(qkv, 3, dim=-1)
+
+        q = q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+
+        freq_cis_sliced = freq_cis[:L]  # no decode steps here — always attend over the full L positions
+        q, k = apply_rope_adjacent(q, k, freq_cis_sliced)
+
+        L_total = k.shape[2]
+        attn = q @ k.transpose(-1, -2) / math.sqrt(self.head_dim)
+
+        combined_mask = None
+
+        if padding_mask is not None:
+            # padding mask defines which key position to ignore
+            mask =  padding_mask.view(B, 1, 1, L_total)
+            combined_mask = mask if combined_mask is None else (combined_mask | mask)
+
+        if combined_mask is not None:
+            attn = attn.masked_fill(combined_mask, float('-inf'))
+
+        attn = torch.softmax(attn, dim=-1)
+        val = attn @ v
+        val = torch.reshape(val.transpose(1, 2), (B, L, D))
+        out = self.out(val)
+        return out
