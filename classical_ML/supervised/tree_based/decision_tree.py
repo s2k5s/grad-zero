@@ -17,11 +17,13 @@ class TreeNode:
 
 
 class DecisionTree:
-    def __init__(self, max_depth, min_samples_leaf, feature_type=None, eval_type="gini"):
+    def __init__(self, max_depth, min_samples_leaf, feature_type=None, max_features=None, eval_type="gini", random_forest=False):
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
         self.feature_type = feature_type
+        self.max_features = max_features
         self.eval_type = eval_type
+        self.random_forest = random_forest
         self.root = None
     
     def gini_impurity(self, y):
@@ -60,6 +62,9 @@ class DecisionTree:
         return self.entropy(y)
 
     def numerical_split(self, x, y):
+        """
+        handling the splitting of numerical features
+        """
         parent_impurity = self.impurity(y)
         # sort based on the feature
         sorting_order = np.argsort(x)
@@ -90,6 +95,10 @@ class DecisionTree:
         return threshold, best_info_gain
     
     def categorical_split(self, x, y):
+        """
+        handling the splitting of categorical features
+        """
+
         parent_impurity = self.impurity(y)
         unique = np.unique(x)
         best_info_gain = float('-inf')
@@ -121,6 +130,21 @@ class DecisionTree:
 
 
     def build_tree(self, X, y, depth):
+        """
+        recursively builds a decision tree
+        """
+
+        if self.random_forest:
+            if self.max_features is None:
+                sampling_feature_dim = X.shape[1]
+            elif self.max_features == "sqrt":
+                sampling_feature_dim = int(np.sqrt(X.shape[1]))
+            else:
+                sampling_feature_dim = X.shape[1]
+        else:
+            sampling_feature_dim = X.shape[1]
+
+
         unique = np.unique(y)
         if depth == self.max_depth or len(y) <= self.min_samples_leaf or len(unique) == 1:
             uniques, counts = np.unique(y, return_counts=True)
@@ -131,9 +155,9 @@ class DecisionTree:
             )
         best_feature, feature_type, best_score, threshold = None, None, float('-inf'), None
         
-        
+        feature_indices = np.random.choice(X.shape[1], sampling_feature_dim, replace=False)
 
-        for i in range(len(X[0])):
+        for i in feature_indices:
             curr_feature = X[:, i]
             if self.feature_type[i] == "Numerical":
                 split_threshold, score = self.numerical_split(curr_feature, y)
@@ -201,6 +225,7 @@ class DecisionTree:
 
     def predict(self, X):
         """
+        batch prediction
         """
         y_pred = np.array([self.traverse(X_row, self.root) for X_row in X])
         return y_pred
