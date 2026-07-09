@@ -132,6 +132,8 @@ class DecisionTree:
     def build_tree(self, X, y, depth):
         """
         recursively builds a decision tree
+        for random forest, at every node we sample a different set of sqrt(num_features) features
+        one level up, the dataset itself is created by sampling with replacement from the origianl dataset
         """
 
         if self.random_forest:
